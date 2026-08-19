@@ -264,6 +264,25 @@ const candleOverlayPlugin = {
       };
       drawMark(marks.buy, '#ff4d4f', 1);
       drawMark(marks.sell, '#26a69a', -1);
+      // 当前游戏日期(最近收盘日)标记: 金色虚线竖线 + 标签, 定位完整历史K线中的当前位置
+      const curIdx = ohlc.findIndex(d => d.isCurrent);
+      if(curIdx >= 0){
+        const x = xScale.getPixelForValue(curIdx);
+        ctx.save();
+        ctx.strokeStyle = '#f1b13a';
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x, chartArea.top);
+        ctx.lineTo(x, chartArea.bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#f1b13a';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('当前收盘日', x, chartArea.top + 12);
+        ctx.restore();
+      }
     }
     ctx.restore();
   }
@@ -274,7 +293,7 @@ function buildChart(canvasId, axisId, kline, marks){
   const ctx = $(canvasId).getContext('2d');
   const rows = (kline || []).slice(-300).filter(r => r.open !== undefined && r.close !== undefined);
   const labels = rows.map(r => String(r.date || '').slice(5,10));
-  const ohlc = rows.map(r => ({x:String(r.date || '').slice(0,10), o:+r.open, h:+r.high, l:+r.low, c:+r.close, isBoom: !!r.is_boom, isPartial: !!r.is_partial}));
+  const ohlc = rows.map(r => ({x:String(r.date || '').slice(0,10), o:+r.open, h:+r.high, l:+r.low, c:+r.close, isBoom: !!r.is_boom, isPartial: !!r.is_partial, isCurrent: !!r.is_current}));
   const volumes = rows.map(r => +r.volume || 0);
   const maxP = Math.max(...ohlc.map(d=>d.h), 1);
   const minP = Math.min(...ohlc.map(d=>d.l), 0);

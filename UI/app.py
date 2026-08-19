@@ -469,8 +469,11 @@ def _kline_window(game: StockTradingGame, before: int = 60, after: int = 0, boom
     cols = [c for c in ["date", "open", "high", "low", "close", "volume", "pctChg"] if c in df.columns]
     rows = _json_safe(df[cols])
     boom_dates = boom_dates or set()
+    current_date_str = str(game.game_state.get("current_date", ""))[:10]
     for row in rows:
         row["is_boom"] = str(row.get("date", ""))[:10] in boom_dates
+        # 标记当前游戏日期(最近收盘日)对应的那根K线, UI绘制竖线标识
+        row["is_current"] = str(row.get("date", ""))[:10] == current_date_str
     return rows
 
 
@@ -504,7 +507,10 @@ def _resample_kline(game: StockTradingGame, rule: str, limit: int, boom_dates: O
             [d if d <= last_trade_day else last_trade_day for d in resampled.index],
             name=resampled.index.name,
         )
-    out = resampled.tail(limit).reset_index()
+    if full:
+        out = resampled.reset_index()  # 完整历史模式: 不截断, 当前日期所在周/月K必在窗口内
+    else:
+        out = resampled.tail(limit).reset_index()
     if not out.empty:
         out["is_partial"] = partial_flag[-len(out):]
     if "volume" not in out.columns:
@@ -513,6 +519,7 @@ def _resample_kline(game: StockTradingGame, rule: str, limit: int, boom_dates: O
     cols = ["date", "open", "high", "low", "close", "volume", "pctChg", "is_partial"]
     rows = _json_safe(out[cols])
     boom_dates = boom_dates or set()
+    cur_dt = pd.to_datetime(game.game_state.get("current_date", ""), errors="coerce")
     if rows and boom_dates:
         source = game.historical_data.copy()
         source["date"] = pd.to_datetime(source["date"], errors="coerce")
@@ -521,6 +528,7 @@ def _resample_kline(game: StockTradingGame, rule: str, limit: int, boom_dates: O
             period_end = pd.to_datetime(row.get("date"), errors="coerce")
             if pd.isna(period_end):
                 row["is_boom"] = False
+                row["is_current"] = False
                 continue
             if rule.startswith("W"):
                 period_start = period_end - pd.Timedelta(days=6)
@@ -528,10 +536,26 @@ def _resample_kline(game: StockTradingGame, rule: str, limit: int, boom_dates: O
                 period_start = period_end.replace(day=1)
             period_dates = source[(source["date"] >= period_start) & (source["date"] <= period_end)]["date"].dt.strftime("%Y-%m-%d")
             row["is_boom"] = any(day in boom_dates for day in period_dates)
+            # 标记包含当前游戏日期(最近收盘日)的周/月K线
+            row["is_current"] = bool(pd.notna(cur_dt) and period_start <= cur_dt <= period_end)
     else:
         for row in rows:
             row["is_boom"] = False
+            row["is_current"] = bool(pd.notna(cur_dt) and period_start_check(row, rule, cur_dt))
     return rows
+
+
+def period_start_check(row: Dict[str, Any], rule: str, cur_dt: Any) -> bool:
+    """判断周/月K线桶是否包含当前游戏日期(辅助函数)。"""
+    try:
+        period_end = pd.to_datetime(row.get("date"), errors="coerce")
+        if pd.isna(period_end) or pd.isna(cur_dt):
+            return False
+        if rule.startswith("W"):
+            return period_end - pd.Timedelta(days=6) <= cur_dt <= period_end
+        return period_end.replace(day=1) <= cur_dt <= period_end
+    except Exception:
+        return False
 
 
 def _kline_periods(game: StockTradingGame) -> Dict[str, List[Dict[str, Any]]]:
