@@ -291,7 +291,7 @@ Chart.register(candleOverlayPlugin);
 
 function buildChart(canvasId, axisId, kline, marks){
   const ctx = $(canvasId).getContext('2d');
-  const rows = (kline || []).slice(-300).filter(r => r.open !== undefined && r.close !== undefined);
+  const rows = (kline || []).filter(r => r.open !== undefined && r.close !== undefined);
   const labels = rows.map(r => String(r.date || '').slice(5,10));
   const ohlc = rows.map(r => ({x:String(r.date || '').slice(0,10), o:+r.open, h:+r.high, l:+r.low, c:+r.close, isBoom: !!r.is_boom, isPartial: !!r.is_partial, isCurrent: !!r.is_current}));
   const volumes = rows.map(r => +r.volume || 0);
