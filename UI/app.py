@@ -136,7 +136,7 @@ def _fetch_tencent_daily(stock_code: str, start_date: str, end_date: str) -> pd.
     symbol = _tencent_symbol(stock_code)
     cache_dir = Path(_default_save_dir()) / "kline_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_key = f"{symbol}_{end.strftime('%Y%m%d')}"
+    cache_key = f"{symbol}_{start.strftime('%Y%m%d')}_{end.strftime('%Y%m%d')}"  # key含拉取起点: 不同date_start不共用缓存
     cache_file = cache_dir / f"{cache_key}.json"
 
     def _validate(df: pd.DataFrame) -> bool:
@@ -167,7 +167,11 @@ def _fetch_tencent_daily(stock_code: str, start_date: str, end_date: str) -> pd.
 
     cached = _cache_hit()
     if cached is not None and pd.to_datetime(cached["date"]).max().date() >= end.date() - pd.Timedelta(days=10):
-        return cached
+        # 额外校验起点: 缓存数据最早日期必须不晚于本次拉取起点, 否则起点不足(旧缓存污染)重新拉
+        cache_min = pd.to_datetime(cached["date"]).min().date()
+        if cache_min <= start.date():
+            return cached
+        print(f"[kline] 缓存起点不足({cache_min} > {start.date()}), 重新拉取")
 
     param = f"{symbol},day,{start.strftime('%Y-%m-%d')},{end.strftime('%Y-%m-%d')},640,qfq"
     df = None
