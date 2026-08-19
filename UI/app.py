@@ -454,12 +454,13 @@ def _boom_signal_info(game: StockTradingGame) -> Dict[str, Any]:
 
 
 def _kline_window(game: StockTradingGame, before: int = 60, after: int = 0, boom_dates: Optional[set] = None, full: bool = False) -> List[Dict[str, Any]]:
-    """获取当前索引附近 K 线窗口。full=True 时从数据起点显示到 current_date(防未来K线)。"""
+    """获取当前索引附近 K 线窗口。full=True 时显示完整历史(不随游戏进度截断)。
+    注意: UI图表用完整历史供人查看; AI决策观察文本独立防泄漏(只到当前游戏日期)。"""
     if not hasattr(game, "historical_data") or game.historical_data is None:
         return []
     if full:
         start = 0
-        end = min(len(game.historical_data), int(game.current_data_index) + 1)
+        end = len(game.historical_data)  # 完整历史: 从数据起点到最新
     else:
         start = max(0, int(game.current_data_index) - before + 1)
         end = min(len(game.historical_data), int(game.current_data_index) + after + 1)
@@ -474,11 +475,14 @@ def _kline_window(game: StockTradingGame, before: int = 60, after: int = 0, boom
 
 def _resample_kline(game: StockTradingGame, rule: str, limit: int, boom_dates: Optional[set] = None, full: bool = False) -> List[Dict[str, Any]]:
     """从日线 historical_data 聚合出周线/月线，供 UI 绘图。
-    full=True 时用全部历史上下文(截止 current_date);
+    full=True 时用完整历史(不随游戏进度截断);
     排除未完整周期桶(当月/当周未结束不输出),避免画出未来日期K线。"""
     if not hasattr(game, "historical_data") or game.historical_data is None:
         return []
-    end = min(len(game.historical_data), int(game.current_data_index) + 1)
+    if full:
+        end = len(game.historical_data)
+    else:
+        end = min(len(game.historical_data), int(game.current_data_index) + 1)
     df = game.historical_data.iloc[:end].copy()
     if df.empty or "date" not in df.columns:
         return []
@@ -643,7 +647,7 @@ def _snapshot(session: GameSession, include_render: bool = False) -> Dict[str, A
         "portfolio": portfolio,
         "positions": _positions(game),
         "transactions": _json_safe(state.get("transaction_history", [])),
-        "kline": _kline_window(game, boom_dates=set(_boom_signal_info(game)["dates"])),
+        "kline": _kline_window(game, full=True, boom_dates=set(_boom_signal_info(game)["dates"])),
         "kline_periods": _kline_periods(game),
         "boom_signals": _boom_signal_info(game),
         "observations": {
