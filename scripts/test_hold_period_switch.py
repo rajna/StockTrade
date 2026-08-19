@@ -181,6 +181,55 @@ def test_random_switch_flow():
     print(f"✅ random_switch_stock: 切至 {game.game_state['current_stock']}")
 
 
+def test_should_auto_switch():
+    """should_auto_switch: 周期未到 False / 周期到且开启 True / 关闭 False。"""
+    g1 = make_dummy_game(hold_days_from=0)   # 持有1天, 未到周期
+    assert stg.should_auto_switch(g1) is False
+    g2 = make_dummy_game(hold_days_from=9)   # 持有10天, 到周期, auto_switch 默认开启
+    assert stg.should_auto_switch(g2) is True
+    g2.game_state["auto_switch"] = False    # 关闭自动切换
+    assert stg.should_auto_switch(g2) is False
+    print("✅ should_auto_switch: 周期+开关双条件判定")
+
+
+def test_auto_switch_records_last_switch():
+    """自动切换(auto=True)记录 last_auto_switch 供观察prompt告知决策者。"""
+    game = make_dummy_game(hold_days_from=9)
+    def fake_load(code, start):
+        df = game.historical_data.copy()
+        return df
+    game._load_historical_data = fake_load
+    stg._update_market_prices = lambda g: None
+    r = stg.random_switch_stock(game, auto=True)
+    assert r["success"] is True, r
+    assert r.get("auto") is True
+    last = game.game_state["last_auto_switch"]
+    assert last is not None
+    assert last["from_symbol"] == "sh.600000"
+    assert last["to_symbol"] == game.game_state["current_stock"]
+    actions = [t["action"] for t in game.game_state["transaction_history"]]
+    assert "自动切换" in actions
+    print(f"✅ 自动切换: last_auto_switch={last}, 交易记录含'自动切换'")
+
+
+def test_auto_switch_step_simulation():
+    """模拟 step 推进流程: 推进后到周期 -> 自动切换 -> 周期重置不再连续触发。"""
+    game = make_dummy_game(hold_days_from=9)  # current_date=第10个交易日, 持有10天已到周期
+    def fake_load(code, start):
+        df = game.historical_data.copy()
+        return df
+    game._load_historical_data = fake_load
+    stg._update_market_prices = lambda g: None
+    assert stg.should_auto_switch(game) is True
+    # 执行自动切换
+    r = stg.random_switch_stock(game, auto=True)
+    assert r["success"] is True, r
+    # 切换后周期重置, 不再触发
+    assert stg.should_auto_switch(game) is False
+    assert stg.get_hold_days(game) == 1
+    print("✅ step模拟: 达周期自动切换, 切换后周期重置不连续触发")
+
+
 if __name__ == "__main__":
     tests = [
         test_hold_period_default,
@@ -191,6 +240,9 @@ if __name__ == "__main__":
         test_switch_date_alignment,
         test_random_switch_excludes_switched,
         test_random_switch_flow,
+        test_should_auto_switch,
+        test_auto_switch_records_last_switch,
+        test_auto_switch_step_simulation,
     ]
     for t in tests:
         t()

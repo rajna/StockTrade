@@ -128,6 +128,7 @@
       <div class="field"><label>初始资金</label><div class="input"><input id="cashInput" type="number" value="100000" /><span class="ccy">CNY</span></div></div>
       <div class="field"><label>开始日期</label><div class="input"><input id="dateInput" value="2025-01-01" /></div></div>
       <div class="field"><label>持股周期（交易日，持有满后🉑切换股票）</label><div class="input"><input id="holdPeriodInput" type="number" min="1" value="5" /><span class="ccy">天</span></div></div>
+      <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="autoSwitchInput" checked style="width:auto" /> 自动切换（推进交易日满周期后自动随机换股）</label></div>
       <button class="btn btn-primary btn-block" id="initBtn">初始化交易游戏</button>
       <button class="btn btn-block" id="finishBtn" style="margin-top:8px">结束游戏（之后才能重新初始化）</button>
       <button class="btn btn-block" id="loadBtn" style="margin-top:8px">从存档恢复上次游戏</button>
@@ -362,12 +363,16 @@ function render(data){
     $('holdPill').textContent = '--';
     $('holdPill').classList.remove('can-switch');
   }
+  const autoOn = h.auto_switch !== false;
   const switchBtn = $('switchBtn');
   switchBtn.disabled = !h.can_switch;
   switchBtn.textContent = h.can_switch ? '切换股票（随机/指定）' : `切换股票（需持有满 ${h.hold_period||5} 天）`;
-  $('switchHint').textContent = h.can_switch
-    ? `已持有 ${h.hold_days||0} 天 ≥ 周期 ${h.hold_period} 天，可以切换；已切换 ${h.stock_switch_count||0} 次`
-    : `当前持有 ${h.hold_days||0}/${h.hold_period||5} 天，未到持股周期（开始日 ${String(h.hold_start_date||'').slice(0,10)||'--'}）`;
+  const lastSw = h.last_auto_switch;
+  $('switchHint').textContent = (lastSw ? `上轮自动切换: ${lastSw.from_symbol} → ${lastSw.to_symbol}；` : '') +
+    (autoOn ? `自动切换已开启，推进满周期自动换股；` : `自动切换已关闭，需手动切换；`) +
+    (h.can_switch
+      ? `已持有 ${h.hold_days||0} 天 ≥ 周期 ${h.hold_period} 天，下次推进将自动切换；已切换 ${h.stock_switch_count||0} 次`
+      : `当前持有 ${h.hold_days||0}/${h.hold_period||5} 天，未到持股周期（开始日 ${String(h.hold_start_date||'').slice(0,10)||'--'}）`);
   $('sessionId').textContent = 'Session ' + (sessionId || '--');
   $('cashBalance').textContent = fmtMoney(p.cash_balance);
   $('portfolioValue').textContent = fmtMoney(p.portfolio_value);
@@ -397,7 +402,7 @@ async function init(force){
   try{
     const stock = $('quickStock').value.trim() || $('stockInput').value.trim();
     if(stock) $('stockInput').value = stock;
-    const body = {stock_code:$('stockInput').value.trim(), initial_cash:$('cashInput').value, date_start:$('dateInput').value.trim(), hold_period:$('holdPeriodInput').value};
+    const body = {stock_code:$('stockInput').value.trim(), initial_cash:$('cashInput').value, date_start:$('dateInput').value.trim(), hold_period:$('holdPeriodInput').value, auto_switch:$('autoSwitchInput').checked};
     if(force) body.force = true;
     const data = await api('/api/init', {method:'POST', body:JSON.stringify(body)});
     render(data); toast('初始化完成');

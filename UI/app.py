@@ -566,8 +566,20 @@ def _build_ai_prompt(game: StockTradingGame) -> str:
         next_date = str(df.iloc[idx]["date"])[:10]
     else:
         next_date = "无更多交易日(已到最后)"
+    # 持股周期信息: 告知决策者当前股票周期与持有进度
+    hold_period = int(game.game_state.get("hold_period", 5))
+    hold_days = stg.get_hold_days(game)
+    if stg.can_switch_stock(game):
+        hold_line = f"持股周期: 当前股票 {game.game_state.get('current_stock')} 已持有 {hold_days}/{hold_period} 个交易日, 已达到周期, 下次推进将自动随机切换股票"
+    else:
+        hold_line = f"持股周期: 当前股票 {game.game_state.get('current_stock')} 已持有 {hold_days}/{hold_period} 个交易日, 未到周期, 不可切换"
+    # 最近一次自动切换提示
+    last_switch = game.game_state.get("last_auto_switch")
+    if last_switch:
+        hold_line += f"\n注意: 上轮推进已自动切换股票: {last_switch.get('from_symbol')} → {last_switch.get('to_symbol')} (持股周期已重置, 当前分析对象为新股票)"
     prompt = f"""
 决策基准: 观察信息截止最近收盘日 {cur}(K线不含其后再交易日); 本次交易决策面向下一交易日 {next_date}, 成交价默认参考最近收盘价。
+{hold_line}
 根据以下股票投资组合分析，生成交易策略：
 
 {_current_market_line(game)}
@@ -644,6 +656,8 @@ def _snapshot(session: GameSession, include_render: bool = False) -> Dict[str, A
             "can_switch": stg.can_switch_stock(game),
             "hold_start_date": state.get("hold_start_date"),
             "stock_switch_count": int(state.get("stock_switch_count", 0)),
+            "auto_switch": bool(state.get("auto_switch", True)),
+            "last_auto_switch": state.get("last_auto_switch"),
         },
         "portfolio": portfolio,
         "positions": _positions(game),
@@ -732,6 +746,8 @@ def init_game():
     save_dir = payload.get("save_dir") or os.path.join(SCRIPTS_DIR, "game_states")
     # 持股周期(交易日): 当前股票持有满 hold_period 个交易日后才允许切换股票, 默认 5
     hold_period = _int(payload.get("hold_period"), 5)
+    # 自动切换: 推进交易日(step/advance)后若达到持股周期则自动随机切换股票, 默认开启
+    auto_switch = bool(payload.get("auto_switch", True))
 
     # 校验:开始日期距今至少 30 天。交易模拟有约 24 个交易日预热期,
     # 日期过近时历史数据不足(只剩1条日K),图表和预热逻辑都会异常。
@@ -758,6 +774,7 @@ def init_game():
             date_start=date_start,
             save_dir=save_dir,
             hold_period=hold_period,
+            auto_switch=auto_switch,
         )
         try:
             game = future.result(timeout=45)
@@ -947,6 +964,12 @@ def step_once():
             session.prev_snapshot = snapshot_before
         portfolio_after_trade = get_portfolio_value(game)
         advanced = next_trading_day(game)
+        # 推进后自动切换: 当前股票达到持股周期则自动随机切换(无需手动调 /api/switch)
+        auto_switch_result = None
+        if advanced and stg.should_auto_switch(game):
+            auto_switch_result = stg.random_switch_stock(game, auto=True)
+            if not auto_switch_result.get("success"):
+                print(f"[step] 自动切换失败: {auto_switch_result.get('message')}")
         session.step_index += 1
 
         step_record = {
@@ -958,6 +981,7 @@ def step_once():
             "fill_price": _extract_fill_price(trade_result),  # 实际成交价
             "decision": decision,
             "trade_result": trade_result,
+            "auto_switch": _json_safe(auto_switch_result) if auto_switch_result else None,
             "advanced": advanced,
             "portfolio": portfolio_after_trade,
             "price": decision.get("tradePrice"),
@@ -979,12 +1003,19 @@ def advance_only():
         return jsonify({"ok": False, "error": "还没有初始化模拟，请先初始化"}), 404
     try:
         advanced = next_trading_day(session.game)
+        # 推进后自动切换: 当前股票达到持股周期则自动随机切换
+        auto_switch_result = None
+        if advanced and stg.should_auto_switch(session.game):
+            auto_switch_result = stg.random_switch_stock(session.game, auto=True)
+            if not auto_switch_result.get("success"):
+                print(f"[advance] 自动切换失败: {auto_switch_result.get('message')}")
         session.step_index += 1
         record = {
             "step": session.step_index,
             "type": "仅推进",
             "date": session.game.game_state.get("current_date"),
             "advanced": advanced,
+            "auto_switch": _json_safe(auto_switch_result) if auto_switch_result else None,
             "portfolio": get_portfolio_value(session.game),
             "price": _current_price(session.game),
         }

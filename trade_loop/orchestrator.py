@@ -66,16 +66,17 @@ def money(v: Any) -> float:
 def cmd_init(a) -> None:
     data = api("/api/init", "POST", json={
         "stock_code": a.stock, "initial_cash": a.cash, "date_start": a.date,
-        "hold_period": a.hold_period})
+        "hold_period": a.hold_period, "auto_switch": a.auto_switch})
     save_state(
         stock=a.stock, initial_cash=float(a.cash), date_start=a.date,
-        hold_period=int(a.hold_period),
+        hold_period=int(a.hold_period), auto_switch=bool(a.auto_switch),
         last_decision=None, last_total_assets=None,
     )
     print(json.dumps({
         "ok": True, "stock": data.get("current_stock"),
         "current_date": data.get("current_date"),
         "hold_period": (data.get("hold") or {}).get("hold_period"),
+        "auto_switch": (data.get("hold") or {}).get("auto_switch"),
         "cash": data.get("portfolio_text", "").split("现金余额")[-1][:30] if data.get("portfolio_text") else "?",
     }, ensure_ascii=False))
 
@@ -180,7 +181,7 @@ def cmd_pnl(_a) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="stock-trade 交易 loop 编排器(A侧)")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("init"); p.add_argument("--stock", default="sh.600000"); p.add_argument("--cash", type=float, default=100000.0); p.add_argument("--date", default="2025-01-01"); p.add_argument("--hold-period", type=int, default=5, help="持股周期(交易日), 默认5, 持有满周期后可切换股票")
+    p = sub.add_parser("init"); p.add_argument("--stock", default="sh.600000"); p.add_argument("--cash", type=float, default=100000.0); p.add_argument("--date", default="2025-01-01"); p.add_argument("--hold-period", type=int, default=5, help="持股周期(交易日), 默认5, 持有满周期后可切换股票"); p.add_argument("--no-auto-switch", dest="auto_switch", action="store_false", help="关闭自动切换(默认开启: 推进满周期自动随机换股)")
     sub.add_parser("prompt")
     s = sub.add_parser("step"); s.add_argument("--decision", choices=["买入","卖出","持有","不建仓"], default="不建仓"); s.add_argument("--price", type=float, default=0); s.add_argument("--qty", type=int, default=0); s.add_argument("--reason", default="loop决策")
     sw = sub.add_parser("switch"); sw.add_argument("--stock", default="", help="指定切换的股票代码; 留空则随机选股"); sw.add_argument("--random", action="store_true", help="随机切换(默认行为)"); sw.add_argument("--force", action="store_true", help="跳过持股周期校验强制切换")

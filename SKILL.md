@@ -133,24 +133,32 @@ game = StockTradingGame(
     stock_code='sh.600000',
     initial_cash=100000.0,
     date_start='2015-12-03 00:00:00',
-    hold_period=5  # 持股周期(交易日), 默认 5
+    hold_period=5,        # 持股周期(交易日), 默认 5
+    auto_switch=True      # 自动切换(默认开启): 推进交易日满周期后自动随机换股
 )
 
 # 查看当前股票已持有交易日数 / 是否达到周期可切换
 hold_days = get_hold_days(game)          # 已持有交易日数
 can_switch = can_switch_stock(game)      # 持有天数 >= hold_period 时为 True
+should_auto_switch(game)                 # 自动切换是否应在下次推进时触发(auto_switch 开启且已到周期)
 
 # 切换股票: 指定切换 / 随机切换(排除当前与已切换过的股票)
 switch_stock(game, 'sz.000001')                 # 指定目标股票
-random_switch_stock(game)                        # 随机选股切换
+random_switch_stock(game)                        # 随机选股切换(失败自动换候选重试,最多5次)
 switch_stock(game, 'sz.000001', force=True)      # force=True 跳过持股周期校验
+random_switch_stock(game, auto=True)             # 自动切换模式(记录 last_auto_switch 供观察prompt告知决策者)
 ```
 
 切换规则:
 - 当前股票持有交易日数 < hold_period 时拒绝切换 (force=True 可强制)
-- 有持仓时按当前收盘价自动清仓(记入交易历史)
+- **先加载并校验新股票数据, 成功后才清仓** (避免数据异常标的误清仓)
 - 新股票历史数据从同一 date_start 加载并定位到当前游戏日期(不回退/不回跳)
 - 切换后持股周期重新从当日计算, 已切换过的股票记入 switched_stocks(随机切换时排除)
+
+自动切换(与双 agent 闭环结合):
+- `/api/step` 与 `/api/advance` 推进交易日后, 若 auto_switch 开启且持有达周期, 自动随机切换股票
+- 随机选股遇到数据异常标的(残缺/停牌K线)自动换候选重试, 失败不中断游戏
+- 观察 prompt(`/api/prompt`) 自动携带"持股周期: 已持有 N/M 个交易日, 已达到/未到周期"及"上轮已自动切换 A → B"提示, 决策者(worker)每轮可感知周期状态
 # Get current market data
 market_data = get_current_market_data(game)
 
@@ -207,6 +215,7 @@ The `StockTradingGame` class provides a comprehensive trading simulation environ
 - **AI Decision Integration**: Supports AI-generated trading decisions
 - **Risk Management**: Stops trading when profit > 10% or loss > 5%
 - **持股周期与股票切换**: 初始化可设置 hold_period(默认5个交易日); 当前股票持有满周期后可通过 switch_stock/random_switch_stock 切换到新股票(自动清仓、日期对齐、周期重置)
+- **自动切换**: auto_switch(默认开启)下, `/api/step`/`/api/advance` 推进满周期后自动随机换股; 随机选股失败自动重试; 观察 prompt 携带周期状态供决策者感知
 
 #### Trading Operations:
 - `buy_stock()`: Execute buy orders with price validation
