@@ -39,7 +39,7 @@ B 启动后第一条消息让它读角色文件：
 ### 终端 1（当前 pi = Agent A）：跑一轮
 
 ```
-1. python3 .../trade_loop/orchestrator.py init --stock sh.301171 --cash 100000 --date 2025-08-14 --hold-period 5
+1. python3 .../trade_loop/orchestrator.py init --stock sh.301171 --cash 100000 --date 2025-08-14
 2. python3 .../trade_loop/orchestrator.py prompt        # 复制输出
 3. coms_send target=stock-coder prompt=<观察数据文本>    # 用 pi 工具
    coms_await msg_id=...                                 # 得到决策JSON
@@ -50,18 +50,6 @@ B 启动后第一条消息让它读角色文件：
 7. 回到 2（下一轮）
 ```
 
-### 持股周期与股票切换
-
-- 初始化可设 `--hold-period N`（默认 5）：当前股票持有满 N 个交易日后才允许切换
-- 查看当前持有进度：`python3 .../orchestrator.py pnl` 返回里带 hold 字段（hold_days/hold_period/can_switch）
-- 切换股票（需持有满周期，否则 409 报错）：
-  ```
-  python3 .../orchestrator.py switch --random                 # 随机选股（默认）
-  python3 .../orchestrator.py switch --stock sz.000001        # 指定股票
-  python3 .../orchestrator.py switch --random --force         # 跳过周期校验强制切换
-  ```
-- 切换时自动清仓当前持仓、新股票对齐到当前游戏日期、持股周期重新计算
-- `loop_state.json` 记录当前 stock，切换后自动更新
 
 ## 盈亏语义（A 反馈给 B 的内容）
 

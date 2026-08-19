@@ -7,7 +7,6 @@ import time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Optional, List, Dict, Any, TypedDict
 import traceback
 import json
@@ -595,15 +594,8 @@ class StockTradingGame:
         initial_cash: float = 100000.0,
         date_start: str = "2026-2-03 00:00:00",
         load_from_save: bool = False,
-        save_dir: str = "./game_states",
-        hold_period: int = 5,
-        auto_switch: bool = True
+        save_dir: str = "./game_states"
     ):
-        # 持股周期(交易日): 当前股票持有满 hold_period 个交易日后才允许切换股票
-        self.hold_period = max(1, int(hold_period))
-        # 自动切换: 推进交易日(step/advance)后若达到持股周期则自动随机切换股票
-        self.auto_switch = bool(auto_switch)
-        
         # Initialize GameStateManager
         self.state_manager = GameStateManager(save_dir)
         
@@ -620,13 +612,12 @@ class StockTradingGame:
         
         # Load historical data
         self.historical_data = self._load_historical_data(stock_code, date_start)
-        self.date_start = date_start  # 切换股票时按同一起点重新加载数据
         
         # Determine starting position (must have boom signal, otherwise exit)
         self.current_data_index = self._find_start_index()
         
         # Initialize game state
-        self._init_game_state(stock_code, initial_cash, hold_period=self.hold_period, auto_switch=self.auto_switch)
+        self._init_game_state(stock_code, initial_cash)
         
         # Update market data
         _update_market_prices(self)
@@ -707,9 +698,7 @@ class StockTradingGame:
     def _init_game_state(
         self,
         stock_code: str,
-        initial_cash: float,
-        hold_period: int = 5,
-        auto_switch: bool = True
+        initial_cash: float
     ) -> None:
         """初始化游戏状态"""
         current_date = pd.to_datetime(
@@ -728,19 +717,7 @@ class StockTradingGame:
             'train_start_date': current_date,
             'current_day_k_observing': '',
             'current_week_k_observing': '',
-            'current_month_k_observing': '',
-            # 持股周期(交易日): 持有满 hold_period 个交易日后可切换股票
-            'hold_period': max(1, int(hold_period)),
-            # 当前股票的持有开始日期(切换股票时重置为切换当日)
-            'hold_start_date': current_date,
-            # 累计切换股票次数
-            'stock_switch_count': 0,
-            # 已切换过的股票列表(随机切换时排除,避免切回旧股)
-            'switched_stocks': [],
-            # 自动切换: 推进交易日(step/advance)后若达到持股周期则自动随机切换
-            'auto_switch': bool(auto_switch),
-            # 最近一次自动切换的信息(供观察prompt告知决策者)
-            'last_auto_switch': None
+            'current_month_k_observing': ''
         }
         
         self.available_stocks = [stock_code]
@@ -985,217 +962,3 @@ def get_unrealized_pnl_percent(game: StockTradingGame) -> float:
     """
     portfolio_info = get_portfolio_value(game)
     return portfolio_info['unrealized_pnl_percent'] or 0.0
-
-# ==================== 持股周期与股票切换 ====================
-
-def get_hold_days(game: 'StockTradingGame') -> int:
-    """
-    当前股票已持有的交易日数(含持有开始日, 截止 current_date)。
-    从 hold_start_date 到当前日期之间落在当前股票历史数据内的交易日计数。
-    
-    Args:
-        game: StockTradingGame实例
-    
-    Returns:
-        int: 已持有交易日数(至少 1)
-    """
-    try:
-        hold_start = game.game_state.get('hold_start_date')
-        if not hold_start:
-            return 1
-        dates = pd.to_datetime(game.historical_data['date'])
-        start_dt = pd.to_datetime(hold_start)
-        cur_dt = pd.to_datetime(game.game_state['current_date'])
-        in_range = dates[(dates >= start_dt) & (dates <= cur_dt)]
-        return max(1, len(in_range))
-    except Exception:
-        return 1
-
-def can_switch_stock(game: 'StockTradingGame') -> bool:
-    """
-    当前股票是否达到持股周期(可以切换)。
-    持有交易日数 >= hold_period 时返回 True。
-    """
-    period = int(game.game_state.get('hold_period', 5))
-    return get_hold_days(game) >= period
-
-def should_auto_switch(game: 'StockTradingGame') -> bool:
-    """
-    是否应在推进交易日(step/advance)后自动切换股票。
-    条件: auto_switch 开启 且 当前股票已达到持股周期。
-    """
-    if not bool(game.game_state.get('auto_switch', True)):
-        return False
-    return can_switch_stock(game)
-
-def _load_stock_pool() -> pd.DataFrame:
-    """
-    加载 A 股股票列表(scripts/A股股票列表.csv)。
-    
-    Returns:
-        DataFrame: 含 code(6位数字字符串)/name 两列
-    """
-    csv_path = Path(__file__).resolve().parent / 'A股股票列表.csv'
-    if not csv_path.exists():
-        raise FileNotFoundError(f'股票列表不存在: {csv_path}')
-    df = pd.read_csv(csv_path)
-    df['code'] = df['code'].astype(str).str.zfill(6)
-    return df
-
-def get_random_stock(exclude: Optional[List[str]] = None, n: int = 1) -> Any:
-    """
-    从 A 股股票列表随机选取股票代码。
-    
-    Args:
-        exclude: 要排除的代码列表(如已切换过的股票), 格式 sh.xxxxxx/sz.xxxxxx 或裸 6 位码
-        n: 选取数量
-    
-    Returns:
-        str: n=1 时返回单个代码(如 'sh.600000'); 否则返回代码列表
-    """
-    df = _load_stock_pool()
-    if exclude:
-        exclude_codes = {str(c).split('.')[-1].zfill(6) for c in exclude if c}
-        pool = df[~df['code'].isin(exclude_codes)]
-        if len(pool) > 0:
-            df = pool
-    picked = df.sample(n=min(n, len(df)))
-    codes = []
-    for code in picked['code']:
-        prefix = 'sh' if str(code).startswith('6') else 'sz'
-        codes.append(f'{prefix}.{code}')
-    return codes[0] if n == 1 else codes
-
-def switch_stock(game: 'StockTradingGame', new_stock_code: str, force: bool = False, auto: bool = False) -> Dict[str, Any]:
-    """
-    切换当前交易股票到 new_stock_code。
-    
-    规则:
-    - 当前股票持有交易日数 < hold_period 时拒绝切换(force=True 可强制)
-    - 有持仓时按当前收盘价自动清仓(记录交易历史)
-    - 新股票历史数据从同一 date_start 加载, 并定位到当前游戏日期(不回退不回跳)
-    - 切换后 hold_start_date 重置为当前日期, 新股票重新开始计算持股周期
-    - 已切换过的股票记录进 switched_stocks(随机切换时排除)
-    
-    Args:
-        game: StockTradingGame实例
-        new_stock_code: 目标股票代码(sh.xxxxxx/sz.xxxxxx)
-        force: 是否跳过持股周期校验
-        auto: 是否为自动切换(记录到 last_auto_switch 供观察prompt告知决策者)
-    
-    Returns:
-        Dict: 切换结果
-    """
-    try:
-        current_stock = game.game_state['current_stock']
-        if not new_stock_code or new_stock_code == current_stock:
-            return {'success': False, 'message': f'目标股票无效: {new_stock_code}'}
-        
-        # 持股周期校验
-        if not force and not can_switch_stock(game):
-            hold_days = get_hold_days(game)
-            period = int(game.game_state.get('hold_period', 5))
-            return {
-                'success': False,
-                'message': f'当前股票已持有 {hold_days}/{period} 个交易日, 未到持股周期, 不能切换 (force=true 可强制)'
-            }
-        
-        current_date = game.game_state['current_date']
-        old_stock = current_stock
-        
-        # 1) 先加载新股票历史数据并定位(失败则直接返回, 不清仓/不改状态)
-        start = getattr(game, 'date_start', None)
-        if start is None:
-            start = str(game.game_state.get('train_start_date') or current_date)
-        new_data = game._load_historical_data(new_stock_code, start)
-        dates = pd.to_datetime(new_data['date'])
-        cur_dt = pd.to_datetime(current_date)
-        idx = int(dates.searchsorted(cur_dt, side='right')) - 1
-        idx = max(0, min(idx, len(new_data) - 1))
-        
-        # 2) 新数据就绪后再自动清仓(按当前收盘价), 避免数据加载失败误清仓
-        for symbol, position in list(game.game_state['portfolio'].items()):
-            price = float(game.historical_data.iloc[game.current_data_index]['close'])
-            result = sell_stock(game, symbol, price, int(position['quantity']))
-            if not result.get('success'):
-                print(f"[switch] 清仓 {symbol} 失败: {result.get('message')}")
-        
-        # 3) 更新游戏状态
-        game.historical_data = new_data
-        game.current_data_index = idx
-        game.available_stocks = [new_stock_code]
-        game.game_state['current_stock'] = new_stock_code
-        game.game_state['hold_start_date'] = current_date  # 新股票重新计算持股周期
-        game.game_state['stock_switch_count'] = int(game.game_state.get('stock_switch_count', 0)) + 1
-        game.game_state.setdefault('switched_stocks', [])
-        game.game_state['switched_stocks'].append(old_stock)
-        game.id = f"{new_stock_code}:{current_date}"
-        
-        # 5) 刷新市场数据与日/周/月K观察文本
-        _update_market_prices(game)
-        
-        # 6) 记录切换事件
-        game.game_state['transaction_history'].append({
-            'date': current_date,
-            'action': '切换股票' if not auto else '自动切换',
-            'symbol': new_stock_code,
-            'from_symbol': old_stock,
-            'price': 0,
-            'quantity': 0,
-            'total': 0,
-            'timestamp': datetime.now()
-        })
-        
-        # 7) 记录最近一次自动切换(供观察prompt告知决策者)
-        if auto:
-            game.game_state['last_auto_switch'] = {
-                'date': current_date,
-                'from_symbol': old_stock,
-                'to_symbol': new_stock_code
-            }
-        
-        # 8) 存档
-        game._auto_save()
-        
-        result = {
-            'success': True,
-            'message': f'已从 {old_stock} 切换至 {new_stock_code}, 持有开始日重置为 {str(current_date)[:10]}',
-            'current_stock': new_stock_code,
-            'current_date': current_date,
-            'hold_days': 1,
-            'hold_period': int(game.game_state.get('hold_period', 5)),
-            'switch_count': int(game.game_state.get('stock_switch_count', 0)),
-            'auto': auto
-        }
-        return result
-    except Exception as e:
-        traceback.print_exc()
-        return {'success': False, 'message': f'切换股票失败: {e}'}
-
-def random_switch_stock(game: 'StockTradingGame', force: bool = False, auto: bool = False, max_attempts: int = 5) -> Dict[str, Any]:
-    """
-    随机切换当前交易股票: 从 A 股股票池随机选一只(排除当前股票与已切换过的)。
-    自动切换场景下随机选股可能遇到数据异常标的, 最多尝试 max_attempts 次, 每次排除失败候选。
-    
-    Args:
-        game: StockTradingGame实例
-        force: 是否跳过持股周期校验
-        auto: 是否为自动切换(记录到 last_auto_switch)
-        max_attempts: 最大尝试次数(切换失败自动换候选重试)
-    
-    Returns:
-        Dict: 切换结果(同 switch_stock)
-    """
-    exclude = list(game.game_state.get('switched_stocks', [])) + [game.game_state['current_stock']]
-    last_result: Dict[str, Any] = {'success': False, 'message': '未尝试'}
-    for _ in range(max_attempts):
-        try:
-            new_stock = get_random_stock(exclude=exclude, n=1)
-        except Exception as e:
-            return {'success': False, 'message': f'随机选股失败: {e}'}
-        exclude.append(new_stock)  # 候选失败则下次排除
-        last_result = switch_stock(game, new_stock, force=force, auto=auto)
-        if last_result.get('success'):
-            return last_result
-        print(f"[random_switch] 候选 {new_stock} 切换失败: {last_result.get('message')}")
-    return last_result
