@@ -173,7 +173,7 @@ def _fetch_tencent_daily(stock_code: str, start_date: str, end_date: str) -> pd.
             return cached
         print(f"[kline] 缓存起点不足({cache_min} > {start.date()}), 重新拉取")
 
-    param = f"{symbol},day,{start.strftime('%Y-%m-%d')},{end.strftime('%Y-%m-%d')},640,qfq"
+    param = f"{symbol},day,{start.strftime('%Y-%m-%d')},{end.strftime('%Y-%m-%d')},1000,qfq"
     df = None
     for attempt in range(12):  # 腾讯CDN多节点复权版本不一致, 每次新建Session打破粘滞
         session = requests.Session()
@@ -264,7 +264,7 @@ def _fetch_tencent_daily(stock_code: str, start_date: str, end_date: str) -> pd.
 
 def _patch_historical_loader_to_tencent() -> None:
     """让 StockTradingGame 初始化使用可控超时的真实腾讯 K 线。
-    拉取起点自动往前推 400 天(约13个月),保证月K≥12根/周K≥50根;
+    拉取起点取 date_start 前一年(供K线图看更早历史参考) 与 today-400天 中更早者;
     游戏起点仍从用户指定 date_start 之后找启动信号(见 _find_start_index_from_date)。"""
     def load_historical_data(self: StockTradingGame, stock_code: str, date_start: str) -> pd.DataFrame:
         today = datetime.today().strftime("%Y-%m-%d")
@@ -274,7 +274,8 @@ def _patch_historical_loader_to_tencent() -> None:
             ds = pd.NaT
         if pd.isna(ds):
             ds = pd.Timestamp.today() - pd.Timedelta(days=400)
-        fetch_start = min(ds, pd.Timestamp.today() - pd.Timedelta(days=400)).strftime("%Y-%m-%d")
+        # 拉取起点 = min(date_start 前一年, today-400天): 保证K线图含 date_start 之前一年的历史参考数据
+        fetch_start = min(ds - pd.Timedelta(days=365), pd.Timestamp.today() - pd.Timedelta(days=400)).strftime("%Y-%m-%d")
         data = _fetch_tencent_daily(stock_code, fetch_start, today)
         data["date"] = pd.to_datetime(data["date"])
         data = data.sort_values("date").reset_index(drop=True)
