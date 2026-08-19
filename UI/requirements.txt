@@ -1,0 +1,4 @@
+Flask>=3.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+# 其余股票数据依赖请使用 ../scripts/requirements.txt

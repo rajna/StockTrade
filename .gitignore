@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 日志
+*.log
+
+# 备份文件
+*.bak*
+
+# 游戏运行存档（含交易轨迹，不入库）
+scripts/game_states/
