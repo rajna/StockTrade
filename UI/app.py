@@ -868,6 +868,12 @@ def load_session_from_disk():
             game.current_data_index = min(idx, max(0, len(game.historical_data) - 1))
         saved_state = data.get("game_state") or {}
         game.game_state.update(saved_state)
+        # 旧存档兼容(持股周期功能上线前的存档无 hold_start_date 字段):
+        # 关闭自动切换(避免恢复后下次推进立刻自动换股), 持股周期从恢复日起重新计算
+        if "hold_start_date" not in saved_state:
+            game.game_state["auto_switch"] = False
+            game.game_state["hold_start_date"] = game.game_state.get("current_date")
+            game.game_state["last_auto_switch"] = None
         try:
             stg._update_market_prices(game)
         except Exception as exc:
